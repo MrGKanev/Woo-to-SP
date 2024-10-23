@@ -1,4 +1,4 @@
-# WooCommerce/MailChimp to Shopify Customer Migration Tool
+# WooCommerce/MailChimp to Shopify Customer Migration Tool 
 
 A Python script to convert WooCommerce customers and MailChimp subscribers to Shopify customer format.
 
