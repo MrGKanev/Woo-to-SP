@@ -1,118 +1,103 @@
-# WooCommerce to Shopify Orders Converter
+# WooCommerce to Shopify Migration Tools
 
-A Python script that converts WooCommerce order export files into Shopify-compatible CSV format for seamless order migration between platforms.
+A collection of Python scripts to help migrate data from WooCommerce and MailChimp to Shopify.
+
+## Overview
+
+This toolkit provides two main migration tools:
+
+1. [Order Migration Tool](orders/README.md) - Converts WooCommerce orders to Shopify format
+2. [Customer Migration Tool](customers/README.md) - Converts WooCommerce customers and MailChimp subscribers to Shopify customers
 
 ## Prerequisites
 
 - Python 3.6 or higher
 - pandas library (`pip install pandas`)
-- WooCommerce Order Export CSV file (from "Order Import Export for WooCommerce" plugin)
+- WooCommerce export files (orders and/or customers)
+- MailChimp export files (optional)
 
-## Installation
+## Quick Start
 
-1. Clone this repository or download the script:
+1. Clone this repository:
 
 ```bash
-git clone https://github.com/MrGKanev/Woo-to-SP
-# or download woo_to_shopify.py directly
+git clone <repository-url>
+cd woo-to-shopify-migration
 ```
 
 2. Install required dependencies:
 
 ```bash
-pip install pandas
+pip install -r requirements.txt
 ```
 
-## Usage
+3. Choose your migration tool:
+   - For orders: See [Order Migration Guide](orders/README.md)
+   - For customers: See [Customer Migration Guide](customers/README.md)
 
-1. First, export your WooCommerce orders:
-   - Install the "Order Import Export for WooCommerce" plugin from WordPress.org
+## Project Structure
+
+```
+woo-to-shopify-migration/
+├── README.md
+├── requirements.txt
+├── orders/
+│   ├── README.md
+│   └── woo_to_shopify_orders.py
+└── customers/
+    ├── README.md
+    └── woo_to_shopify_customers.py
+```
+
+## Getting Export Files
+
+### WooCommerce Exports
+
+1. Orders:
+   - Install "Order Import Export for WooCommerce" plugin
    - Go to WooCommerce > Export/Import Orders
-   - Export your orders as CSV
+   - Export orders as CSV
 
-2. Run the conversion script:
+2. Customers:
+   - Go to WooCommerce > Customers
+   - Use the built-in export function
+   - Save as CSV
 
-```python
-from woo_to_shopify import convert_woo_to_shopify
+### MailChimp Export
 
-# Convert your orders
-convert_woo_to_shopify(
-    input_file="woocommerce_orders_export.csv",
-    output_file="shopify_orders_import.csv"
-)
-```
+1. Log in to your MailChimp account
+2. Go to Audience > All Contacts
+3. Click "Export Audience"
+4. Choose "Export as CSV"
+5. For full data, select "Export audience data plus all subscriber activity"
 
-3. The script will generate a Shopify-compatible CSV file that you can import through the Shopify admin panel.
+## Common Issues
 
-## Features
+1. Missing Files:
 
-- Converts basic order information
-- Handles customer details
-- Processes billing and shipping addresses
-- Converts order statuses
-- Maintains line items (products)
-- Preserves tax and shipping information
-- Formats phone numbers to international standard
-- Handles date formatting
-- Supports currency conversion
-- Includes error handling and validation
+   ```
+   FileNotFoundError: [Errno 2] No such file or directory
+   ```
 
-## Data Mapping
+   - Ensure all required export files are in the correct location
+   - Check file permissions
 
-### WooCommerce to Shopify Field Mapping
+2. Import Errors:
 
-| WooCommerce Field | Shopify Field |
-|-------------------|---------------|
-| Order Number | Name |
-| Customer Email | Email |
-| Order Status | Financial Status |
-| Order Status | Fulfillment Status |
-| Currency | Currency |
-| Order Date | Created at |
-| Billing Address | Billing Name, Street, etc. |
-| Shipping Address | Shipping Name, Street, etc. |
-| Line Items | Lineitem name, quantity, price |
-| Total Tax | Tax 1 Value |
-| Shipping Method | Shipping Line Title |
-| Shipping Total | Shipping Line Price |
-| Order Total | Total |
+   ```
+   ImportError: No module named 'pandas'
+   ```
 
-## Error Handling
+   - Run `pip install -r requirements.txt`
 
-The script includes error handling for:
+3. Data Format Issues:
 
-- Malformed CSV files
-- Invalid JSON in address fields
-- Missing required fields
-- Incorrect date formats
-- Malformed phone numbers
+   ```
+   ValueError: Time data does not match format
+   ```
 
-If an error occurs, the script will print a detailed error message explaining the issue.
-
-## Limitations
-
-- Does not migrate customer passwords
-- Does not transfer product inventory
-- Custom fields may need manual mapping
-- Order notes and custom meta data require additional configuration
-- Refund history is not transferred
-
-## Best Practices
-
-1. Always backup your data before running the conversion
-2. Test with a small batch of orders first
-3. Verify the converted data in Shopify before importing large datasets
-4. Check for any missing or incorrect information after import
-5. Keep original WooCommerce exports as backup
-
-## Troubleshooting
-
-Common issues and solutions:
-
-1. **Missing Fields**: Ensure your WooCommerce export includes all required fields
-2. **Date Format Errors**: Check that dates are in a standard format
-3. **Character Encoding**: Use UTF-8 encoding for your CSV files
-4. **Large Files**: For large datasets, consider processing in batches
+   - Ensure your WooCommerce and MailChimp exports are in the expected format
+   - Check the specific tool's README for format requirements
 
 ## Contributing
 
@@ -124,9 +109,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-If you encounter any issues or need assistance:
+If you encounter any issues:
 
-1. Check the troubleshooting section
-2. Review your input data format
-3. Verify all prerequisites are met
-4. Open an issue in the repository
+1. Check the specific tool's README
+2. Review the Troubleshooting section
+3. Open an issue in the repository
+
