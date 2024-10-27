@@ -1,4 +1,4 @@
-# wp_sp_collections.py
+# categories/collections.py
 import pandas as pd
 import logging
 from pathlib import Path

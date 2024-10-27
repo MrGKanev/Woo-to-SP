@@ -1,4 +1,4 @@
-# wp_sp_discounts.py
+# promocode/promocode.py
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
