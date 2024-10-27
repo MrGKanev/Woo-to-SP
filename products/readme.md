@@ -201,7 +201,6 @@ Solution: Check variant JSON format in export file
 
 3. **Price Formatting**
 
-- Images must be accessible via URL
 ```
 Error: Invalid price format
 ```
