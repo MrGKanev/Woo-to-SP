@@ -1,26 +1,29 @@
-# WP to SP Discount Code Migration Tool
+# WooCommerce to Shopify - Promo-codes/Discounts Migration Tool
 
-A Python tool for migrating WordPress/WooCommerce coupons to Shopify discount codes with support for various discount types, product restrictions, and usage limits.
+Convert WooCommerce coupons to Shopify discount codes.
 
-## 🌟 Features
+## Features
 
-- ✨ Converts discount codes
-- 💰 Handles percentage and fixed amount discounts
-- 📅 Preserves expiry dates
-- 🛍️ Product-specific restrictions
-- 🔄 Usage limit tracking
-- 📊 Detailed migration reports
-- 🧹 Code cleaning and validation
-- 🚨 Error handling
-- 💾 Batch processing
+- 🏷️ Coupon code conversion
+- 💰 Multiple discount types
+- 📅 Date range preservation
+- 🛍️ Product restrictions
+- 🔢 Usage limit tracking
+- 👤 Customer specific rules
+- 📊 Detailed reporting
 
-## 📋 Prerequisites
+## Usage
 
-- Python 3.8+
-- WordPress/WooCommerce coupon export in CSV format
-- Product mapping file (optional)
+1. **Basic Usage**
 
-## ⚙️ Configuration
+```bash
+python main.py \
+  --input wp_coupons_export.csv \
+  --output sp_discounts_import.csv \
+  --product-mapping product_mapping.csv
+```
+
+2. **Configuration Example**
 
 ```python
 config = {
@@ -30,16 +33,16 @@ config = {
 }
 ```
 
-## 📝 Input Format
+## Input Format
 
-### Coupons Export (wp_coupons_export.csv)
+### Coupons Export
 
 ```csv
-code,discount_type,amount,minimum_amount,product_ids,exclude_product_ids,date_created,date_expires,usage_limit,individual_use,enabled
-SUMMER20,percent,20,50,1234;5678,,2024-01-01,2024-12-31,100,yes,yes
+code,discount_type,amount,minimum_amount,product_ids,exclude_product_ids,date_created,date_expires,usage_limit
+SUMMER20,percent,20,50,1234;5678,,2024-01-01,2024-12-31,100
 ```
 
-### Product Mapping (Optional - product_mapping.csv)
+### Product Mapping (Optional)
 
 ```csv
 woo_id,shopify_id
@@ -47,119 +50,45 @@ woo_id,shopify_id
 5678,987654322
 ```
 
-## 💻 Usage
+## Output Format
 
-### Basic Usage
+Generates Shopify-compatible CSV with:
 
-```python
-from src.wp_sp_discounts import DiscountMigrationTool
+- Discount Code
+- Type
+- Amount
+- Minimum Purchase Amount
+- Date Range
+- Usage Limits
+- Product Restrictions
+- Status
 
-tool = DiscountMigrationTool()
-tool.convert_discounts(
-    input_file="data/input/wp_coupons_export.csv",
-    output_file="data/output/sp_discounts_import.csv"
-)
-```
-
-### Advanced Usage
-
-```python
-config = {
-    'default_minimum_amount': 10,
-    'default_usage_limit': 1000,
-    'batch_size': 1000
-}
-
-tool = DiscountMigrationTool(config)
-tool.convert_discounts(
-    input_file="data/input/wp_coupons_export.csv",
-    output_file="data/output/sp_discounts_import.csv",
-    product_mapping_file="data/input/product_mapping.csv"
-)
-```
-
-## 📤 Output Format
-
-```csv
-Discount Code,Type,Amount,Minimum Purchase Amount,Starts At,Ends At,Usage Limit,Once Per Customer,Status,Applies To,Products,Excluded Products
-SUMMER20,percentage,20,50,2024-01-01 00:00:00,2024-12-31 23:59:59,100,true,enabled,specific,987654321;987654322,
-```
-
-## 📊 Reports
-
-Generated report example:
-
-```json
-{
-  "timestamp": "2024-01-15T14:30:00",
-  "statistics": {
-    "total_coupons": 100,
-    "successful": 98,
-    "failed": 1,
-    "warnings": 1
-  },
-  "success_rate": "98.00%"
-}
-```
-
-## ⚠️ Error Handling
-
-The tool handles:
-
-- Invalid discount codes
-- Missing required fields
-- Invalid dates
-- Product mapping issues
-- Malformed data
-
-## 🔄 Supported Discount Types
+## Supported Discount Types
 
 - Percentage discounts
 - Fixed amount discounts
 - Cart discounts
 - Product-specific discounts
 
-## 🚫 Limitations
+## Best Practices
 
-- Cannot migrate complex rule-based discounts
-- Usage history is imported as count only
-- Customer-specific restrictions need manual setup
-- Some advanced WooCommerce features not supported in Shopify
+1. 💾 Backup discount codes
+2. ✅ Test with small batch
+3. 📋 Verify calculations
+4. 🔍 Check restrictions
+5. 📊 Monitor logs
 
-## ✅ Best Practices
+## Limitations
 
-1. Backup your discount codes before migration
-2. Test with a small batch first
-3. Verify discount calculations
-4. Check product restrictions
-5. Review usage limits
-6. Monitor expiry dates
-7. Validate converted codes in Shopify
+- No complex rule migration
+- Usage history as count only
+- Customer restrictions need setup
+- Some WooCommerce features unsupported
 
-## 🔍 Troubleshooting
+## Support
 
-Common issues and solutions:
+See main project README for general help. For discount-specific issues:
 
-### Invalid Discount Code
-
-```
-Warning: Invalid coupon code format
-```
-
-Solution: Codes are automatically cleaned and formatted
-
-### Product Mapping
-
-```
-Warning: Product ID not found in mapping
-```
-
-Solution: Update product mapping file with missing products
-
-### Date Format
-
-```
-Warning: Invalid date format
-```
-
-Solution: Ensure dates are in YYYY-MM-DD format
+1. Check logs/discount_migration_[timestamp].log
+2. Review reports/discount_migration_report_[timestamp].json
+3. Verify coupon export format
