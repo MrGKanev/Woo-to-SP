@@ -1,0 +1,2 @@
+comment_ID,comment_post_ID,comment_author,comment_content,comment_date,rating,comment_author_email
+1,123,John Doe,Great product!,2024-01-01,5,john@example.com

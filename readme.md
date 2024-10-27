@@ -1,117 +1,170 @@
-# WooCommerce to Shopify Migration Tools
+# WooCommerce to Shopify (Woo-to-SP) Migration Tools
 
-A collection of Python scripts to help migrate data from WooCommerce and MailChimp to Shopify.
+A comprehensive Python toolkit for migrating WooCommerce and MailChimp data to Shopify, including products, customers, orders, categories/collections, reviews, and discount codes.
 
-## Overview
+## 🌟 Features
 
-This toolkit provides two main migration tools:
+### Products Migration
 
-1. [Order Migration Tool](orders/README.md) - Converts WooCommerce orders to Shopify format
-2. [Customer Migration Tool](customers/README.md) - Converts WooCommerce customers and MailChimp subscribers to Shopify customers
+- Complete product data migration
+- Advanced variant support
+- Image handling and CDN mapping
+- SEO data preservation
 
-## Prerequisites
+### Customers Migration
 
-- Python 3.6 or higher
-- pandas library (`pip install pandas`)
-- WooCommerce export files (orders and/or customers)
-- MailChimp export files (optional)
+- WooCommerce customers conversion
+- MailChimp subscribers integration
+- Address formatting
+- Marketing preferences
 
-## Quick Start
+### Orders Migration
 
-1. Clone this repository:
+- Full order history transfer
+- Custom meta field mapping
+- Line item preservation
+- Tax and shipping details
+
+### Collections Migration
+
+- Category hierarchy preservation
+- Smart collection rules
+- SEO data migration
+- Image handling
+
+### Reviews Migration
+
+- Rating preservation
+- Verified buyer status
+- Review metadata
+- Customer information
+
+### Discount Codes Migration
+
+- Coupon code conversion
+- Usage limits
+- Product restrictions
+- Date range preservation
+
+## 📋 Prerequisites
+
+- Python 3.8+
+- Required packages (install via `pip install -r requirements.txt`)
+- WooCommerce/WordPress exports
+- MailChimp exports (if migrating subscribers)
+
+## 🚀 Quick Start
+
+1. Clone the repository:
 
 ```bash
 git clone <repository-url>
-cd woo-to-shopify-migration
+cd woo-to-sp-migration
 ```
 
-2. Install required dependencies:
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
 3. Choose your migration tool:
-   - For orders: See [Order Migration Guide](orders/README.md)
-   - For customers: See [Customer Migration Guide](customers/README.md)
 
-## Project Structure
+```bash
+cd [products|customers|orders|collections|reviews|discounts]
+python main.py
+```
+
+## 📁 Project Structure
 
 ```
-woo-to-shopify-migration/
-├── README.md
+woo-to-sp/
 ├── requirements.txt
+├── LICENSE
+├── README.md
+├── products/
+│   ├── README.md
+│   └── main.py
+├── customers/
+│   ├── README.md
+│   └── main.py
 ├── orders/
 │   ├── README.md
-│   └── woo_to_shopify_orders.py
-└── customers/
+│   └── main.py
+├── collections/
+│   ├── README.md
+│   └── main.py
+├── reviews/
+│   ├── README.md
+│   └── main.py
+└── discounts/
     ├── README.md
-    └── woo_to_shopify_customers.py
+    └── main.py
 ```
 
-## Getting Export Files
+## 📥 Required Export Files
 
-### WooCommerce Exports
+### From WooCommerce
 
-1. Orders:
-   - Install "Order Import Export for WooCommerce" plugin
-   - Go to WooCommerce > Export/Import Orders
-   - Export orders as CSV
+- Products export (CSV)
+- Customer export (CSV)
+- Order export (CSV)
+- Category export (CSV)
+- Review export (CSV)
+- Coupon export (CSV)
 
-2. Customers:
-   - Go to WooCommerce > Customers
-   - Use the built-in export function
-   - Save as CSV
+### From MailChimp (Optional)
 
-### MailChimp Export
+- Audience export (CSV)
+- Merge fields export
+- Segments export
 
-1. Log in to your MailChimp account
-2. Go to Audience > All Contacts
-3. Click "Export Audience"
-4. Choose "Export as CSV"
-5. For full data, select "Export audience data plus all subscriber activity"
+## 🎯 Migration Process
 
-## Common Issues
+1. Export data from WooCommerce/MailChimp
+2. Configure mapping files if needed
+3. Run appropriate migration tool
+4. Review generated reports
+5. Import data into Shopify
 
-1. Missing Files:
+## 📊 Reporting
 
-   ```
-   FileNotFoundError: [Errno 2] No such file or directory
-   ```
+Each tool generates detailed reports including:
 
-   - Ensure all required export files are in the correct location
-   - Check file permissions
+- Success/failure statistics
+- Warning messages
+- Processing timestamps
+- Configuration details
 
-2. Import Errors:
+## ⚠️ Common Issues
 
-   ```
-   ImportError: No module named 'pandas'
-   ```
+1. **Export Format Issues**
+   - Ensure exports are in correct CSV format
+   - Verify required columns are present
 
-   - Run `pip install -r requirements.txt`
+2. **Character Encoding**
+   - Use UTF-8 encoding for all files
+   - Check for special character handling
 
-3. Data Format Issues:
+3. **Memory Usage**
+   - Process large datasets in batches
+   - Monitor system resources
 
-   ```
-   ValueError: Time data does not match format
-   ```
+## 🤝 Contributing
 
-   - Ensure your WooCommerce and MailChimp exports are in the expected format
-   - Check the specific tool's README for format requirements
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+4. Follow coding standards
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Support
+## 🆘 Support
 
-If you encounter any issues:
+If you encounter issues:
 
-1. Check the specific tool's README
-2. Review the Troubleshooting section
+1. Check tool-specific README
+2. Review generated logs
 3. Open an issue in the repository
-
