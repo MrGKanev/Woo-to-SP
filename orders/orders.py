@@ -4,242 +4,286 @@ import json
 from datetime import datetime
 import re
 from pathlib import Path
+from typing import Dict, List, Optional
+import logging
+import sys
 
-def load_meta_mapping(mapping_file):
-    """
-    Load meta mapping configuration from CSV file.
-    Returns empty dict if file doesn't exist.
-    """
-    try:
-        if Path(mapping_file).exists():
-            df = pd.read_csv(mapping_file)
-            mapping = {}
-            for _, row in df.iterrows():
-                mapping[row['meta_key']] = {
-                    'name_prefix': row['name_prefix'] if not pd.isna(row['name_prefix']) else '',
-                    'name_suffix': row['name_suffix'] if not pd.isna(row['name_suffix']) else '',
-                    'sku_prefix': row['sku_prefix'] if not pd.isna(row['sku_prefix']) else '',
-                    'price_field': row['price_field'] if not pd.isna(row['price_field']) else ''
-                }
-            return mapping
-        else:
-            print(f"Warning: Meta mapping file {mapping_file} not found. Using default mapping.")
-            return {}
-    except Exception as e:
-        print(f"Error loading meta mapping: {str(e)}")
-        return {}
+# Add parent directory to Python path
+sys.path.append(str(Path(__file__).parent.parent))
 
-def format_meta_name(key: str, value: str, mapping: dict) -> str:
-    """Format meta item name based on mapping configuration."""
-    if key in mapping:
-        prefix = mapping[key]['name_prefix']
-        suffix = mapping[key]['name_suffix']
+from configs.zerno_config import get_transform_config
+from configs.country_codes import get_country_code
+
+class OrderMigrationTool:
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.setup_logging()
+        self.stats = {
+            'total_orders': 0,
+            'successful': 0,
+            'failed': 0,
+            'warnings': 0,
+            'line_items_created': 0
+        }
+        self.transform_config = get_transform_config()
         
-        # Handle special case where value should be prefix to suffix
-        if suffix and not prefix:
-            return f"{value} {suffix}"
+    def setup_logging(self):
+        """Configure logging system."""
+        log_dir = Path('logs')
+        log_dir.mkdir(exist_ok=True)
         
-        name_parts = []
-        if prefix:
-            name_parts.append(prefix)
-        name_parts.append(value)
-        if suffix:
-            name_parts.append(suffix)
+        log_file = log_dir / f'order_migration_{datetime.now():%Y%m%d_%H%M%S}.log'
         
-        return " ".join(name_parts)
-    return value
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
 
-def clean_phone(phone):
-    """Clean phone numbers to match Shopify format."""
-    if pd.isna(phone):
-        return ''
-    # Remove all non-numeric characters
-    phone = re.sub(r'[^\d+]', '', str(phone))
-    # Ensure it starts with + for international format if needed
-    if not phone.startswith('+'):
-        # Assume US/Canada number if no country code
-        if len(phone) == 10:
-            phone = '+1' + phone
-    return phone
+    def clean_phone(self, phone: str) -> str:
+        """Clean phone numbers to match Shopify format."""
+        if pd.isna(phone) or not phone:
+            return ''
+        # Remove all non-numeric characters
+        phone = re.sub(r'[^\d+]', '', str(phone))
+        # Ensure it starts with + for international format if needed
+        if not phone.startswith('+'):
+            # Assume US/Canada number if no country code
+            if len(phone) == 10:
+                phone = '+1' + phone
+        return phone
 
-def parse_meta_info(meta_str, meta_mapping):
-    """Parse meta information from WooCommerce order item."""
-    meta_items = []
-    
-    if not meta_str or pd.isna(meta_str):
+    def clean_address_field(self, value: str) -> str:
+        """Clean and validate address field, return 'Not Provided' if empty."""
+        if pd.isna(value) or not str(value).strip():
+            return 'Not Provided'
+        return str(value).strip()
+
+    def parse_meta_info(self, meta_str: str, original_price: float) -> List[Dict]:
+        """Parse meta information and create separate line items as needed."""
+        meta_items = []
+        
+        if not meta_str or pd.isna(meta_str):
+            return meta_items
+            
+        # Extract all meta fields
+        meta_matches = re.finditer(r'meta:([^:]+):([^|]+)', meta_str)
+        base_name = re.search(r'name:([^|]+)', meta_str)
+        base_product_name = base_name.group(1) if base_name else "Product"
+        
+        # Group meta fields by type
+        variant_metas = {}
+        component_items = []
+        
+        for match in meta_matches:
+            meta_key = match.group(1)
+            meta_value = match.group(2).strip()
+            
+            if self.transform_config.should_keep_variant(meta_key):
+                # Store as variant attribute
+                variant_metas[meta_key] = meta_value
+            else:
+                # Create separate line item
+                component = self.transform_config.extract_meta_items(f"meta:{meta_key}:{meta_value}")
+                if component:
+                    component_items.extend(component)
+
+        # Create main product with variants
+        variant_description = []
+        for key, value in variant_metas.items():
+            clean_key = key.replace('pa_', '').replace('-', ' ').title()
+            variant_description.append(f"{clean_key}: {value.replace('-', ' ').title()}")
+        
+        main_item = {
+            'name': base_product_name,
+            'variant_info': ' - '.join(variant_description) if variant_description else '',
+            'price': original_price,
+            'requires_shipping': True,
+            'taxable': True,
+            'is_main_item': True
+        }
+        meta_items.append(main_item)
+        
+        # Add component items
+        for item in component_items:
+            # Set price to 0 since it's included in main item price
+            item['price'] = 0
+            meta_items.append(item)
+        
+        # Process any additional add-ons
+        addon_items = self.transform_config.process_addons(meta_str)
+        meta_items.extend(addon_items)
+        
         return meta_items
-    
-    # Extract meta fields
-    meta_pairs = re.findall(r'meta:([^:]+):([^|]+)', meta_str)
-    
-    # First pass: collect all meta values
-    meta_values = {}
-    for key, value in meta_pairs:
-        meta_values[key] = value.strip()
-    
-    # Extract prices from _pao_ids if present
-    prices = {}
-    pao_match = re.search(r'meta:_pao_ids:([^|]+)', meta_str)
-    if pao_match:
-        pao_data = pao_match.group(1)
-        price_matches = re.finditer(r's:3:"key";s:\d+:"([^"]+)";s:5:"value";s:\d+:"([^"]+)";.*?s:9:"raw_price";d:(\d+)', pao_data)
-        for match in price_matches:
-            key, value, price = match.groups()
-            prices[key] = float(price)
-    
-    # Create product items from meta
-    for key, value in meta_values.items():
-        if key in meta_mapping:
-            # Skip if it's a variant attribute
-            if key.startswith('pa_'):
-                continue
-                
-            # Format item name using mapping
-            item_name = format_meta_name(key, value, meta_mapping)
-                
-            # Generate SKU
-            sku_prefix = meta_mapping[key]['sku_prefix']
-            sku = f"{sku_prefix}{value.lower().replace(' ', '-')}"
-            
-            item_data = {
-                'name': item_name,
-                'quantity': 1,
-                'price': prices.get(key, 0),  # Get price from _pao_ids if available
-                'sku': sku,
-                'requires_shipping': True,
-                'taxable': True
-            }
-            
-            meta_items.append(item_data)
-    
-    return meta_items
 
-def convert_woo_to_shopify(input_file, output_file, meta_mapping_file='meta_mapping.csv'):
-    """
-    Convert WooCommerce order export CSV to Shopify-compatible format.
+    def convert_orders(self, input_file: str, output_file: str):
+        """Convert WooCommerce orders to Shopify format."""
+        try:
+            self.logger.info(f"Starting order migration from {input_file}")
+            
+            # Read WooCommerce orders
+            df = pd.read_csv(input_file)
+            self.stats['total_orders'] = len(df)
+            
+            shopify_orders = []
+            
+            for _, order in df.iterrows():
+                try:
+                    # Clean and validate names
+                    billing_first = self.clean_address_field(order.get('billing_first_name', ''))
+                    billing_last = self.clean_address_field(order.get('billing_last_name', ''))
+                    shipping_first = self.clean_address_field(order.get('shipping_first_name', ''))
+                    shipping_last = self.clean_address_field(order.get('shipping_last_name', ''))
+
+                    # Base order data with validated addresses
+                    order_data = {
+                        'Name': f'#{order["order_number"]}',
+                        'Email': order.get('customer_email', ''),
+                        'Financial Status': 'paid' if order.get('status') == 'completed' else 'pending',
+                        'Fulfillment Status': 'fulfilled' if order.get('status') == 'completed' else 'unfulfilled',
+                        'Currency': order.get('order_currency', 'USD'),
+                        'Created at': pd.to_datetime(order['order_date']).strftime('%Y-%m-%d %H:%M:%S'),
+                        
+                        # Billing address fields
+                        'Billing Name': f"{billing_first} {billing_last}".strip(),
+                        'Billing Street': self.clean_address_field(order.get('billing_address_1')),
+                        'Billing Address2': self.clean_address_field(order.get('billing_address_2', '')),
+                        'Billing Company': self.clean_address_field(order.get('billing_company', '')),
+                        'Billing City': self.clean_address_field(order.get('billing_city')),
+                        'Billing Province': self.clean_address_field(order.get('billing_state', '')),
+                        'Billing Province Code': self.clean_address_field(order.get('billing_state', '')),
+                        'Billing Zip': self.clean_address_field(order.get('billing_postcode', '')),
+                        'Billing Country': get_country_code(order.get('billing_country', '')),  # Using external country code lookup
+                        'Billing Phone': self.clean_phone(order.get('billing_phone', '')),
+                        
+                        # Shipping address fields
+                        'Shipping Name': f"{shipping_first} {shipping_last}".strip(),
+                        'Shipping Street': self.clean_address_field(order.get('shipping_address_1')),
+                        'Shipping Address2': self.clean_address_field(order.get('shipping_address_2', '')),
+                        'Shipping Company': self.clean_address_field(order.get('shipping_company', '')),
+                        'Shipping City': self.clean_address_field(order.get('shipping_city')),
+                        'Shipping Province': self.clean_address_field(order.get('shipping_state', '')),
+                        'Shipping Province Code': self.clean_address_field(order.get('shipping_state', '')),
+                        'Shipping Zip': self.clean_address_field(order.get('shipping_postcode', '')),
+                        'Shipping Country': get_country_code(order.get('shipping_country', '')),  # Using external country code lookup
+                        'Shipping Phone': self.clean_phone(order.get('shipping_phone', ''))
+                    }
+                    
+                    # If shipping address is empty, copy from billing
+                    if order_data['Shipping Street'] == 'Not Provided':
+                        for field in ['Name', 'Street', 'Address2', 'Company', 'City', 'Province', 
+                                    'Province Code', 'Zip', 'Country', 'Phone']:
+                            order_data[f'Shipping {field}'] = order_data[f'Billing {field}']
+                    
+                    # Process line items
+                    for i in range(1, 20):  # Assuming max 19 line items
+                        line_item_key = f'line_item_{i}'
+                        if line_item_key in order and not pd.isna(order[line_item_key]):
+                            line_item = str(order[line_item_key])
+                            
+                            # Get original price
+                            total_match = re.search(r'total:(\d+\.?\d*)', line_item)
+                            original_price = float(total_match.group(1)) if total_match else 0
+                            
+                            # Parse meta info and create line items
+                            items = self.parse_meta_info(line_item, original_price)
+                            
+                            # Create Shopify order entries for each item
+                            for idx, item in enumerate(items):
+                                item_order = order_data.copy()
+                                
+                                # Add variant info to name if present
+                                display_name = item['name']
+                                if 'variant_info' in item and item['variant_info']:
+                                    display_name += f" ({item['variant_info']})"
+                                
+                                item_order.update({
+                                    'Lineitem name': display_name,
+                                    'Lineitem quantity': item.get('quantity', 1),
+                                    'Lineitem price': item['price'],
+                                    'Lineitem sku': item.get('sku', ''),
+                                    'Lineitem requires shipping': 'true' if item.get('requires_shipping', True) else 'false',
+                                    'Lineitem taxable': 'true' if item.get('taxable', True) else 'false',
+                                })
+                                
+                                # Add totals only to first/main item
+                                if item.get('is_main_item', False):
+                                    item_order.update({
+                                        'Taxes Included': 'false',
+                                        'Tax 1 Name': 'Tax',
+                                        'Tax 1 Value': order.get('tax_total', 0),
+                                        'Shipping Line Title': order.get('shipping_method', 'Standard'),
+                                        'Shipping Line Price': order.get('shipping_total', 0),
+                                        'Total': order.get('order_total', 0),
+                                    })
+                                
+                                shopify_orders.append(item_order)
+                                self.stats['line_items_created'] += 1
+                    
+                    self.stats['successful'] += 1
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing order {order.get('order_number')}: {str(e)}")
+                    self.stats['failed'] += 1
+            
+            # Save to CSV
+            if shopify_orders:
+                output_df = pd.DataFrame(shopify_orders)
+                output_df.to_csv(output_file, index=False)
+                
+                # Generate report
+                self.generate_report(output_file)
+                
+                self.logger.info(f"Order migration completed. See {output_file} for results.")
+            else:
+                self.logger.warning("No orders were successfully processed!")
+            
+        except Exception as e:
+            self.logger.error(f"Migration failed: {str(e)}")
+            raise
+
+    def generate_report(self, output_file: str) -> None:
+        """Generate migration report."""
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'input_file': self.config.get('input_file', 'N/A'),
+            'output_file': output_file,
+            'statistics': self.stats,
+            'success_rate': f"{(self.stats['successful'] / self.stats['total_orders'] * 100):.2f}%"
+        }
+        
+        # Save report
+        report_file = Path('reports') / f'order_migration_report_{datetime.now():%Y%m%d_%H%M%S}.json'
+        report_file.parent.mkdir(exist_ok=True)
+        
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        self.logger.info(f"Migration report saved to {report_file}")
+
+def main():
+    """Example usage of the OrderMigrationTool."""
+    # Use current directory
+    current_dir = Path.cwd()
     
-    Args:
-        input_file (str): Path to WooCommerce export CSV file
-        output_file (str): Path to save Shopify-compatible CSV file
-        meta_mapping_file (str): Path to meta mapping configuration CSV file
-    """
+    # Default file names
+    input_file = current_dir / "orders/woocommerce_orders_export.csv"
+    output_file = current_dir / "orders/shopify_orders_import.csv"
+    
+    tool = OrderMigrationTool()
+    
     try:
-        # Load meta mapping configuration
-        meta_mapping = load_meta_mapping(meta_mapping_file)
-        
-        # Read WooCommerce export file
-        df = pd.read_csv(input_file)
-        
-        # Create Shopify formatted dataframe
-        shopify_orders = []
-        
-        for _, row in df.iterrows():
-            # Base order data
-            order_data = {
-                'Name': f'#{row["order_number"]}',
-                'Email': row['customer_email'],
-                'Financial Status': 'paid' if row['status'] == 'completed' else 'pending',
-                'Fulfillment Status': 'fulfilled' if row['status'] == 'completed' else 'unfulfilled',
-                'Currency': row.get('order_currency', 'USD'),
-                'Created at': pd.to_datetime(row['order_date']).strftime('%Y-%m-%d %H:%M:%S'),
-                'Billing Name': f"{row['billing_first_name']} {row['billing_last_name']}".strip(),
-                'Billing Street': row['billing_address_1'],
-                'Billing Address2': row['billing_address_2'],
-                'Billing Company': row['billing_company'],
-                'Billing City': row['billing_city'],
-                'Billing Province': row['billing_state'],
-                'Billing Province Code': row['billing_state'],
-                'Billing Zip': row['billing_postcode'],
-                'Billing Country': row['billing_country'],
-                'Billing Phone': clean_phone(row['billing_phone']),
-                'Shipping Name': f"{row['shipping_first_name']} {row['shipping_last_name']}".strip(),
-                'Shipping Street': row['shipping_address_1'],
-                'Shipping Address2': row['shipping_address_2'],
-                'Shipping Company': row['shipping_company'],
-                'Shipping City': row['shipping_city'],
-                'Shipping Province': row['shipping_state'],
-                'Shipping Province Code': row['shipping_state'],
-                'Shipping Zip': row['shipping_postcode'],
-                'Shipping Country': row['shipping_country'],
-                'Shipping Phone': clean_phone(row['shipping_phone'])
-            }
-            
-            # Process all possible line items
-            order_items = []
-            
-            # Process main line items
-            for i in range(1, 20):
-                line_item_key = f'line_item_{i}'
-                if line_item_key in row and not pd.isna(row[line_item_key]):
-                    line_item = str(row[line_item_key])
-                    
-                    # Extract main product info
-                    name_match = re.search(r'name:([^|]+)', line_item)
-                    qty_match = re.search(r'quantity:(\d+)', line_item)
-                    total_match = re.search(r'total:(\d+\.?\d*)', line_item)
-                    sku_match = re.search(r'sku:([^|]+)', line_item)
-                    
-                    if name_match and qty_match and total_match:
-                        quantity = int(qty_match.group(1))
-                        total = float(total_match.group(1))
-                        
-                        # Add main product
-                        main_item = {
-                            'name': name_match.group(1).strip(),
-                            'quantity': quantity,
-                            'price': total / quantity,
-                            'sku': sku_match.group(1).strip() if sku_match else '',
-                            'requires_shipping': True,
-                            'taxable': True
-                        }
-                        order_items.append(main_item)
-                        
-                        # Parse and add meta items as separate products
-                        meta_items = parse_meta_info(line_item, meta_mapping)
-                        order_items.extend(meta_items)
-            
-            # Create separate Shopify order entries for each item
-            for idx, item in enumerate(order_items):
-                item_order = order_data.copy()
-                item_order.update({
-                    'Lineitem name': item['name'],
-                    'Lineitem quantity': item['quantity'],
-                    'Lineitem price': item['price'],
-                    'Lineitem sku': item['sku'],
-                    'Lineitem requires shipping': 'true' if item['requires_shipping'] else 'false',
-                    'Lineitem taxable': 'true' if item['taxable'] else 'false',
-                })
-                
-                # Add totals only to first item
-                if idx == 0:
-                    item_order.update({
-                        'Taxes Included': 'false',
-                        'Tax 1 Name': 'Tax',
-                        'Tax 1 Value': row.get('tax_total', 0),
-                        'Shipping Line Title': row.get('shipping_method', 'Standard'),
-                        'Shipping Line Price': row.get('shipping_total', 0),
-                        'Total': row.get('order_total', 0),
-                    })
-                
-                shopify_orders.append(item_order)
-        
-        # Convert to DataFrame and save
-        shopify_df = pd.DataFrame(shopify_orders)
-        shopify_df.to_csv(output_file, index=False)
-        
-        print(f"Successfully converted {len(df)} orders with meta items to Shopify format")
-        print(f"Total line items created: {len(shopify_orders)}")
-        print(f"Output saved to: {output_file}")
-        
+        tool.convert_orders(
+            input_file=str(input_file),
+            output_file=str(output_file)
+        )
     except Exception as e:
-        print(f"Error converting orders: {str(e)}")
+        logging.error(f"Migration failed: {str(e)}")
         raise
 
 if __name__ == "__main__":
-    
-    # You can change these file paths directly here
-    input_file = "woocommerce_orders_export.csv"     # Change this to your WooCommerce export file
-    output_file = "shopify_orders_import.csv"        # Change this to your desired output file
-    meta_mapping_file = "meta_mapping.csv"           # Change this to your meta mapping file
-    
-    convert_woo_to_shopify(input_file, output_file, meta_mapping_file)
+    main()

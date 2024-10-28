@@ -1,4 +1,5 @@
 meta_key,name_prefix,name_suffix,sku_prefix,price_field
-Accent Piece,,Accent Piece,accent-piece-,accent_piece
-Burr Set,,,burr-set-,burr_set
-Optional Add-ons,,,addon-,addon
+pa_burr-set,,Burr Set,burr-set-,burr_price
+pa_cap-style,,Cap,cap-style-,cap_price
+Accent Piece,,Accent Piece,accent-piece-,accent_price
+Optional Add-ons,,Add-on,addon-,addon_price
