@@ -2,239 +2,246 @@
 """Categories/Collections migration module for converting WooCommerce categories to Shopify collections."""
 
 import pandas as pd
-import logging
 from pathlib import Path
-from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
 import json
-import re
-from typing import Dict, List, Optional
-from urllib.parse import urlparse
 import hashlib
 import argparse
+import sys
 
-class CollectionMigrationTool:
-    """Tool for migrating WordPress/WooCommerce categories to Shopify collections."""
-    
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {}
-        self.setup_logging()
-        self.stats = {
-            'total_collections': 0,
-            'successful': 0,
-            'failed': 0,
-            'warnings': 0,
-            'rules_created': 0
-        }
-        self.processed_handles = set()
-        
-    def setup_logging(self):
-        """Configure logging system."""
-        log_dir = Path('logs')
-        log_dir.mkdir(exist_ok=True)
-        
-        log_file = log_dir / f'collection_migration_{datetime.now():%Y%m%d_%H%M%S}.log'
-        
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base.base_migration import BaseMigrationTool
+
+
+class CollectionMigrationTool(BaseMigrationTool):
+    """Tool for migrating WooCommerce categories to Shopify collections."""
+
+    TOOL_NAME = "collection"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """Initialize collection migration tool."""
+        super().__init__(config)
+        self.processed_handles: set = set()
+        self.image_mapping: Dict[str, str] = {}
+        self.parent_relations: List[Dict[str, Any]] = []
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration for collection migration."""
+        config = super()._get_default_config()
+        config.update({
+            'use_smart_collections': True,
+            'default_sort_order': 'best-selling',
+        })
+        return config
+
+    def _init_stats(self) -> Dict[str, Any]:
+        """Initialize statistics for collection migration."""
+        stats = super()._init_stats()
+        stats.update({
+            'rules_created': 0,
+            'images_processed': 0,
+            'parent_relations': 0,
+        })
+        return stats
+
+    def validate_item(self, category: Any) -> Tuple[bool, List[str]]:
+        """
+        Validate category data before conversion.
+
+        Args:
+            category: Category data to validate
+
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        errors = []
+
+        if not category.get('name'):
+            errors.append("Missing category name")
+
+        return len(errors) == 0, errors
 
     def create_unique_handle(self, title: str) -> str:
-        """Create unique URL-friendly handle from collection title."""
-        base_handle = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+        """
+        Create unique URL-friendly handle from collection title.
+
+        Args:
+            title: Collection title
+
+        Returns:
+            Unique URL-friendly handle
+        """
+        base_handle = self.create_handle(title)
         handle = base_handle
-        
+
         # If handle exists, append a short hash
         counter = 1
         while handle in self.processed_handles:
             hash_suffix = hashlib.md5(f"{base_handle}{counter}".encode()).hexdigest()[:4]
             handle = f"{base_handle}-{hash_suffix}"
             counter += 1
-            
+
         self.processed_handles.add(handle)
         return handle
 
-    def clean_html(self, html_content: str) -> str:
-        """Clean HTML content for Shopify compatibility."""
-        if not html_content:
-            return ""
-            
-        # Remove WordPress-specific shortcodes
-        html_content = re.sub(r'\[[^\]]+\]', '', html_content)
-        
-        # Remove empty paragraphs
-        html_content = re.sub(r'<p>\s*</p>', '', html_content)
-        
-        # Clean up whitespace
-        html_content = re.sub(r'\s+', ' ', html_content)
-        
-        return html_content.strip()
+    def extract_image_url(self, image_data: Any) -> str:
+        """
+        Extract clean image URL from WordPress image data.
 
-    def extract_image_url(self, image_data: str) -> str:
-        """Extract clean image URL from WordPress image data."""
-        if not image_data:
+        Args:
+            image_data: Image data (URL, JSON string, or dict)
+
+        Returns:
+            Clean image URL string
+        """
+        if not image_data or pd.isna(image_data):
             return ""
-            
-        try:
-            # Handle JSON encoded image data
-            if image_data.startswith('{'):
-                img_json = json.loads(image_data)
+
+        image_str = str(image_data)
+
+        # Handle JSON encoded image data
+        if image_str.startswith('{'):
+            try:
+                img_json = json.loads(image_str)
                 return img_json.get('url', '')
-                
-            # Handle direct URLs
-            if image_data.startswith(('http://', 'https://')):
-                return image_data
-                
-            return ""
-            
-        except json.JSONDecodeError:
-            return image_data if image_data.startswith(('http://', 'https://')) else ""
+            except json.JSONDecodeError:
+                pass
 
-    def create_collection_rule(self, category: pd.Series) -> Dict:
-        """Create Shopify collection rules from category data."""
+        # Handle direct URLs
+        if image_str.startswith(('http://', 'https://')):
+            return image_str
+
+        return ""
+
+    def create_collection_rules(self, category: Any) -> List[Dict[str, str]]:
+        """
+        Create Shopify collection rules from category data.
+
+        Args:
+            category: Category data
+
+        Returns:
+            List of rule dictionaries
+        """
         rules = []
-        
-        # Tag-based rule
-        if 'slug' in category:
+
+        # Tag-based rule using slug
+        if category.get('slug'):
             rules.append({
                 'column': 'tag',
                 'relation': 'equals',
                 'condition': f"category_{category['slug']}"
             })
-            
-        # Product type rule
-        if 'name' in category:
+            self.stats['rules_created'] += 1
+
+        # Product type rule using name
+        if category.get('name'):
             rules.append({
                 'column': 'type',
                 'relation': 'equals',
                 'condition': category['name']
             })
-            
+            self.stats['rules_created'] += 1
+
         return rules
 
-    def convert_collections(self, input_file: str, output_file: str, image_mapping_file: Optional[str] = None):
+    def convert_item(self, category: Any) -> Optional[Dict[str, Any]]:
         """
-        Convert WordPress/WooCommerce categories to Shopify collections.
-        
+        Convert a WooCommerce category to Shopify collection format.
+
+        Args:
+            category: Category data to convert
+
+        Returns:
+            Converted collection data for Shopify
+        """
+        # Create unique handle
+        handle = self.create_unique_handle(category['name'])
+
+        # Get image URL from mapping or extract from data
+        image_url = self.image_mapping.get(
+            str(category.get('term_id', '')),
+            self.extract_image_url(category.get('image', ''))
+        )
+
+        if image_url:
+            self.stats['images_processed'] += 1
+
+        # Create collection rules if smart collections enabled
+        rules = []
+        if self.config.get('use_smart_collections', True):
+            rules = self.create_collection_rules(category)
+
+        # Create collection data
+        collection = {
+            'Handle': handle,
+            'Title': category['name'],
+            'Body HTML': self.clean_html(str(category.get('description', ''))),
+            'Collection Type': 'smart' if self.config.get('use_smart_collections', True) else 'custom',
+            'Published': True,
+            'Image Src': image_url,
+            'Sort Order': self.config.get('default_sort_order', 'best-selling'),
+            'Template Suffix': '',
+            'Published Scope': 'web',
+            'SEO Title': self.clean_text(category.get('seo_title', category['name'])),
+            'SEO Description': self.clean_text(category.get('seo_description', '')),
+            'Rules': json.dumps(rules) if rules else '',
+        }
+
+        # Track parent-child relationship
+        if category.get('parent') and not pd.isna(category.get('parent')):
+            self.parent_relations.append({
+                'child_handle': handle,
+                'parent_id': category['parent']
+            })
+            self.stats['parent_relations'] += 1
+
+        return collection
+
+    def load_mapping(self, mapping_df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Load category ID to image URL mapping.
+
+        Args:
+            mapping_df: DataFrame with category_id and image_url columns
+
+        Returns:
+            Dictionary mapping category IDs to image URLs
+        """
+        if 'category_id' in mapping_df.columns and 'image_url' in mapping_df.columns:
+            return dict(zip(
+                mapping_df['category_id'].astype(str),
+                mapping_df['image_url'].astype(str)
+            ))
+        return {}
+
+    def convert_collections(
+        self,
+        input_file: str,
+        output_file: str,
+        image_mapping_file: Optional[str] = None
+    ) -> None:
+        """
+        Convert WooCommerce categories to Shopify collections.
+
         Args:
             input_file: Path to WordPress categories export CSV
             output_file: Path to save Shopify collections CSV
-            image_mapping_file: Optional CSV file mapping category IDs to image URLs
+            image_mapping_file: Optional CSV mapping category IDs to image URLs
         """
-        try:
-            self.logger.info(f"Starting collection migration from {input_file}")
-            
-            # Load image mapping if provided
-            image_mapping = {}
-            if image_mapping_file:
-                mapping_df = pd.read_csv(image_mapping_file)
-                image_mapping = dict(zip(mapping_df['category_id'], mapping_df['image_url']))
-            
-            # Read WordPress categories
-            df = pd.read_csv(input_file)
-            self.stats['total_collections'] = len(df)
-            
-            shopify_collections = []
-            parent_child_relations = []  # Store parent-child relationships
-            
-            for _, category in df.iterrows():
-                try:
-                    # Create collection handle
-                    handle = self.create_unique_handle(category['name'])
-                    
-                    # Get image URL
-                    image_url = (
-                        image_mapping.get(category.get('term_id', ''), '') or 
-                        self.extract_image_url(category.get('image', ''))
-                    )
-                    
-                    # Create collection data
-                    collection = {
-                        'Handle': handle,
-                        'Title': category['name'],
-                        'Body HTML': self.clean_html(category.get('description', '')),
-                        'Collection Type': 'smart' if self.config.get('use_smart_collections', True) else 'custom',
-                        'Published': True,
-                        'Image Src': image_url,
-                        'Sort Order': 'best-selling',  # Can be customized
-                        'Template Suffix': '',
-                        'Published Scope': 'web',
-                        'SEO Title': category.get('seo_title', category['name']),
-                        'SEO Description': category.get('seo_description', ''),
-                        'Rules': json.dumps(self.create_collection_rule(category)) if self.config.get('use_smart_collections', True) else '',
-                    }
-                    
-                    # Store parent-child relationship if exists
-                    if 'parent' in category and category['parent']:
-                        parent_child_relations.append({
-                            'child': handle,
-                            'parent_id': category['parent']
-                        })
-                    
-                    shopify_collections.append(collection)
-                    self.stats['successful'] += 1
-                    
-                    if collection['Rules']:
-                        self.stats['rules_created'] += 1
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing category {category.get('name')}: {str(e)}")
-                    self.stats['failed'] += 1
-            
-            # Process parent-child relationships
-            for relation in parent_child_relations:
-                try:
-                    parent_row = df[df['term_id'] == relation['parent_id']].iloc[0]
-                    parent_handle = self.create_unique_handle(parent_row['name'])
-                    
-                    # Add parent handle to child collection
-                    child_collection = next(c for c in shopify_collections if c['Handle'] == relation['child'])
-                    child_collection['Parent Handle'] = parent_handle
-                    
-                except Exception as e:
-                    self.logger.warning(f"Could not process parent-child relationship: {str(e)}")
-                    self.stats['warnings'] += 1
-            
-            # Save to CSV
-            output_df = pd.DataFrame(shopify_collections)
-            output_df.to_csv(output_file, index=False)
-            
-            # Generate report
-            self.generate_report(output_file)
-            
-            self.logger.info(f"Collection migration completed. See {output_file} for results.")
-            
-        except Exception as e:
-            self.logger.error(f"Migration failed: {str(e)}")
-            raise
+        # Load image mapping if provided
+        if image_mapping_file and Path(image_mapping_file).exists():
+            mapping_df = pd.read_csv(image_mapping_file)
+            self.image_mapping = self.load_mapping(mapping_df)
+            self.logger.info(f"Loaded {len(self.image_mapping)} image mappings")
 
-    def generate_report(self, output_file: str) -> None:
-        """Generate migration report."""
-        report = {
-            'timestamp': datetime.now().isoformat(),
-            'input_file': self.config.get('input_file', 'N/A'),
-            'output_file': output_file,
-            'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_collections'], 1) * 100):.2f}%",
-            'configuration': {
-                'use_smart_collections': self.config.get('use_smart_collections', True),
-                'image_mapping_used': bool(self.config.get('image_mapping_file'))
-            }
-        }
-        
-        # Save report
-        report_file = Path('reports') / f'collection_migration_report_{datetime.now():%Y%m%d_%H%M%S}.json'
-        report_file.parent.mkdir(exist_ok=True)
-        
-        with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2)
-        
-        self.logger.info(f"Migration report saved to {report_file}")
+        # Use base class conversion
+        self.convert_data(input_file, output_file)
+
+        # Log additional stats
+        if self.parent_relations:
+            self.logger.info(f"Found {len(self.parent_relations)} parent-child relationships")
+
 
 def main():
     """CLI entry point for collection migration."""
@@ -261,12 +268,17 @@ def main():
         action='store_true',
         help='Use manual collections instead of smart collections'
     )
+    parser.add_argument(
+        '--no-progress',
+        action='store_true',
+        help='Disable progress bar'
+    )
 
     args = parser.parse_args()
 
     config = {
         'use_smart_collections': not args.manual_collections,
-        'image_mapping_file': args.image_mapping
+        'show_progress': not args.no_progress,
     }
 
     tool = CollectionMigrationTool(config)
@@ -278,8 +290,8 @@ def main():
             image_mapping_file=args.image_mapping
         )
     except Exception as e:
-        logging.error(f"Migration failed: {str(e)}")
-        raise
+        print(f"Migration failed: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

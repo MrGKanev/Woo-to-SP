@@ -3,83 +3,65 @@
 
 import pandas as pd
 import json
-from datetime import datetime
-import re
-from typing import Dict, List, Optional, Any
 from pathlib import Path
 import zipfile
 import shutil
-import logging
+from typing import Dict, List, Optional, Tuple, Any
 import argparse
+import sys
+from tqdm import tqdm
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base.base_migration import BaseMigrationTool
 
 
-class CustomerMigrationTool:
+class CustomerMigrationTool(BaseMigrationTool):
     """Tool for migrating WooCommerce customers and MailChimp subscribers to Shopify."""
 
-    def __init__(self, config: Optional[Dict] = None):
-        """
-        Initialize migration tool with configuration.
+    TOOL_NAME = "customer"
 
-        Args:
-            config: Configuration dictionary
-        """
-        self.config = config or {}
-        self.setup_logging()
-        self.shopify_customers: List[Dict[str, Any]] = []
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """Initialize customer migration tool."""
+        super().__init__(config)
         self.seen_emails: set = set()
         self.mailchimp_data: Dict[str, Any] = {
             'subscribers': [],
             'merge_fields': {},
             'segments': {},
-            'activities': {}
         }
-        self.stats = {
-            'total_customers': 0,
+
+    def _init_stats(self) -> Dict[str, Any]:
+        """Initialize statistics for customer migration."""
+        stats = super()._init_stats()
+        stats.update({
             'woocommerce_customers': 0,
             'mailchimp_subscribers': 0,
-            'successful': 0,
-            'failed': 0,
-            'warnings': 0,
-            'duplicates_skipped': 0
-        }
+            'duplicates_skipped': 0,
+        })
+        return stats
 
-    def setup_logging(self) -> None:
-        """Configure logging system."""
-        log_dir = Path('logs')
-        log_dir.mkdir(exist_ok=True)
-
-        log_file = log_dir / f'customer_migration_{datetime.now():%Y%m%d_%H%M%S}.log'
-
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-
-    def clean_phone(self, phone: Optional[str]) -> str:
+    def validate_item(self, customer: Any) -> Tuple[bool, List[str]]:
         """
-        Clean phone numbers to match Shopify format.
+        Validate customer data before conversion.
 
         Args:
-            phone: Phone number to clean
+            customer: Customer data to validate
 
         Returns:
-            Cleaned phone number string
+            Tuple of (is_valid, list of error messages)
         """
-        if pd.isna(phone) or not phone:
-            return ''
-        # Remove all non-numeric characters except +
-        phone = re.sub(r'[^\d+]', '', str(phone))
-        # Ensure it starts with + for international format if needed
-        if not phone.startswith('+'):
-            # Assume US/Canada number if no country code
-            if len(phone) == 10:
-                phone = '+1' + phone
-        return phone
+        errors = []
+
+        email = str(customer.get('Email', '')).lower().strip()
+        if not email:
+            errors.append("Missing email address")
+
+        # Check for duplicates
+        if email in self.seen_emails:
+            self.stats['duplicates_skipped'] += 1
+            errors.append("Duplicate email")
+
+        return len(errors) == 0, errors
 
     def parse_address(self, address_str: Any) -> Dict[str, Any]:
         """
@@ -91,29 +73,39 @@ class CustomerMigrationTool:
         Returns:
             Dictionary with address components
         """
-        try:
-            if isinstance(address_str, str) and (address_str.startswith('{') or address_str.startswith('[')):
-                return json.loads(address_str)
-            return address_str if isinstance(address_str, dict) else {}
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            self.logger.debug(f"Could not parse address: {e}")
+        if pd.isna(address_str) or address_str is None:
             return {}
 
-    def parse_woo_customer(self, customer: pd.Series) -> Dict[str, Any]:
+        if isinstance(address_str, dict):
+            return address_str
+
+        if isinstance(address_str, str):
+            if address_str.startswith('{') or address_str.startswith('['):
+                try:
+                    return json.loads(address_str)
+                except json.JSONDecodeError:
+                    pass
+        return {}
+
+    def convert_item(self, customer: Any) -> Optional[Dict[str, Any]]:
         """
-        Convert WooCommerce customer data to Shopify format.
+        Convert a WooCommerce customer to Shopify format.
 
         Args:
-            customer: WooCommerce customer row
+            customer: Customer data to convert
 
         Returns:
-            Dictionary with Shopify customer format
+            Converted customer data for Shopify
         """
         billing_address = self.parse_address(customer.get('Billing Address', {}))
         shipping_address = self.parse_address(customer.get('Shipping Address', {}))
 
+        email = str(customer.get('Email', '')).lower().strip()
+        self.seen_emails.add(email)
+        self.stats['woocommerce_customers'] += 1
+
         return {
-            'Email': str(customer.get('Email', '')).lower(),
+            'Email': email,
             'First Name': customer.get('First Name', billing_address.get('first_name', '')),
             'Last Name': customer.get('Last Name', billing_address.get('last_name', '')),
             'Company': billing_address.get('company', ''),
@@ -137,7 +129,7 @@ class CustomerMigrationTool:
             'Shipping Phone': self.clean_phone(shipping_address.get('phone', '')),
             'Total Spent': customer.get('Total Spent', 0),
             'Total Orders': customer.get('Order Count', 0),
-            'Notes': customer.get('Customer Note', ''),
+            'Notes': self.clean_text(customer.get('Customer Note', '')),
             'Tax Exempt': customer.get('Tax Exempt', False),
         }
 
@@ -185,17 +177,16 @@ class CustomerMigrationTool:
                             df = pd.read_csv(segments_file)
                             self.mailchimp_data['segments'][list_folder.name] = df.to_dict('records')
 
-            self.logger.info(f"Found {len(self.mailchimp_data['subscribers'])} subscribers")
+            self.logger.info(f"Found {len(self.mailchimp_data['subscribers'])} MailChimp subscribers")
 
         except Exception as e:
             self.logger.error(f"Error loading MailChimp info folder: {str(e)}")
             raise
         finally:
-            # Clean up temp directory if it was created
             if temp_dir is not None and temp_dir.exists():
                 shutil.rmtree(temp_dir)
 
-    def parse_mailchimp_subscriber(self, subscriber: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def convert_mailchimp_subscriber(self, subscriber: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Convert MailChimp subscriber data to Shopify format.
 
@@ -203,35 +194,37 @@ class CustomerMigrationTool:
             subscriber: MailChimp subscriber data
 
         Returns:
-            Dictionary with Shopify customer format, or None if duplicate
+            Converted customer data, or None if duplicate
         """
-        email = str(subscriber.get('Email Address', '')).lower()
+        email = str(subscriber.get('Email Address', '')).lower().strip()
 
-        # Skip if we already have this customer from WooCommerce
         if email in self.seen_emails:
             self.stats['duplicates_skipped'] += 1
             return None
 
-        # Get merge fields mapping for this list
+        # Get merge fields mapping
         list_id = subscriber.get('List ID', '')
         merge_fields_map: Dict[str, str] = {}
         if list_id in self.mailchimp_data['merge_fields']:
             for field in self.mailchimp_data['merge_fields'][list_id]:
                 merge_fields_map[field['Tag']] = field['Name']
 
-        # Parse MERGE fields using the mapping
+        # Parse MERGE fields
         merge_data: Dict[str, Any] = {}
         for key, value in subscriber.items():
             if key.startswith('MERGE'):
                 field_name = merge_fields_map.get(key, key)
                 merge_data[field_name] = value
 
-        # Get segments/tags for this subscriber
+        # Get tags
         tags = ['MailChimp Import', 'Newsletter Subscriber']
         if list_id in self.mailchimp_data['segments']:
             for segment in self.mailchimp_data['segments'][list_id]:
                 if subscriber.get('Email Address') in str(segment.get('Members', '')):
                     tags.append(segment['Name'])
+
+        self.seen_emails.add(email)
+        self.stats['mailchimp_subscribers'] += 1
 
         return {
             'Email': email,
@@ -251,8 +244,6 @@ class CustomerMigrationTool:
             'Subscription Status': subscriber.get('Status', ''),
             'List Name': subscriber.get('List Name', ''),
             'Signup Source': subscriber.get('Source', ''),
-            'Last Modified': subscriber.get('Last Modified', ''),
-            'Signup Location': subscriber.get('IP Signup', ''),
         }
 
     def convert_customers(
@@ -269,90 +260,70 @@ class CustomerMigrationTool:
             mailchimp_folder: Path to MailChimp info folder
             output_file: Path to save Shopify-compatible CSV file
         """
+        from datetime import datetime
+        self.stats['start_time'] = datetime.now()
+
+        converted_customers: List[Dict[str, Any]] = []
+
         try:
-            self.logger.info("Starting customer migration")
-
             # Process WooCommerce customers first
-            if woo_file:
+            if woo_file and Path(woo_file).exists():
+                self.logger.info(f"Processing WooCommerce customers from {woo_file}")
                 woo_df = pd.read_csv(woo_file)
-                self.logger.info(f"Processing {len(woo_df)} WooCommerce customers...")
 
-                for _, customer in woo_df.iterrows():
-                    try:
-                        customer_data = self.parse_woo_customer(customer)
-                        self.seen_emails.add(customer_data['Email'])
-                        self.shopify_customers.append(customer_data)
-                        self.stats['woocommerce_customers'] += 1
-                        self.stats['successful'] += 1
-                    except Exception as e:
-                        self.logger.error(f"Error processing WooCommerce customer: {str(e)}")
-                        self.stats['failed'] += 1
+                iterator = woo_df.iterrows()
+                if self.config.get('show_progress', True):
+                    iterator = tqdm(iterator, total=len(woo_df), desc="WooCommerce customers")
+
+                for _, customer in iterator:
+                    is_valid, errors = self.validate_item(customer)
+                    if is_valid:
+                        converted = self.convert_item(customer)
+                        if converted:
+                            converted_customers.append(converted)
+                            self.stats['successful'] += 1
+                    else:
+                        if 'Duplicate email' not in errors:
+                            self.stats['warnings'] += 1
 
             # Process MailChimp subscribers
-            if mailchimp_folder:
+            if mailchimp_folder and Path(mailchimp_folder).exists():
                 self.load_mailchimp_info_folder(mailchimp_folder)
                 self.logger.info("Processing MailChimp subscribers...")
 
-                for subscriber in self.mailchimp_data['subscribers']:
+                iterator = self.mailchimp_data['subscribers']
+                if self.config.get('show_progress', True):
+                    iterator = tqdm(iterator, desc="MailChimp subscribers")
+
+                for subscriber in iterator:
                     try:
-                        customer_data = self.parse_mailchimp_subscriber(subscriber)
-                        if customer_data:  # Only add if not already exists
-                            self.seen_emails.add(customer_data['Email'])
-                            self.shopify_customers.append(customer_data)
-                            self.stats['mailchimp_subscribers'] += 1
+                        converted = self.convert_mailchimp_subscriber(subscriber)
+                        if converted:
+                            converted_customers.append(converted)
                             self.stats['successful'] += 1
                     except Exception as e:
                         self.logger.error(f"Error processing MailChimp subscriber: {str(e)}")
                         self.stats['failed'] += 1
 
             # Update total count
-            self.stats['total_customers'] = len(self.shopify_customers)
+            self.stats['total_items'] = len(converted_customers)
 
-            # Convert to DataFrame and save
-            if self.shopify_customers:
-                shopify_df = pd.DataFrame(self.shopify_customers)
+            # Save to CSV
+            if converted_customers:
+                shopify_df = pd.DataFrame(converted_customers)
                 shopify_df.to_csv(output_file, index=False)
+                self.logger.info(f"Saved {len(converted_customers)} customers to {output_file}")
 
                 # Generate report
+                self.stats['end_time'] = datetime.now()
                 self.generate_report(output_file)
-
-                self.logger.info("Conversion Summary:")
-                self.logger.info(f"Total unique customers: {len(self.shopify_customers)}")
-                self.logger.info(f"WooCommerce customers: {self.stats['woocommerce_customers']}")
-                self.logger.info(f"MailChimp subscribers: {self.stats['mailchimp_subscribers']}")
-                self.logger.info(f"Duplicates skipped: {self.stats['duplicates_skipped']}")
-                self.logger.info(f"Output saved to: {output_file}")
+                self._log_summary()
             else:
                 self.logger.warning("No customers found to convert!")
 
         except Exception as e:
-            self.logger.error(f"Error converting customers: {str(e)}")
+            self.logger.error(f"Migration failed: {str(e)}")
             raise
-
-    def generate_report(self, output_file: str) -> None:
-        """
-        Generate migration report.
-
-        Args:
-            output_file: Path to the output file
-        """
-        total = max(self.stats['total_customers'], 1)
-        report = {
-            'timestamp': datetime.now().isoformat(),
-            'output_file': output_file,
-            'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / total * 100):.2f}%",
-            'configuration': self.config
-        }
-
-        # Save report
-        report_file = Path('reports') / f'customer_migration_report_{datetime.now():%Y%m%d_%H%M%S}.json'
-        report_file.parent.mkdir(exist_ok=True)
-
-        with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2)
-
-        self.logger.info(f"Migration report saved to {report_file}")
 
 
 def main():
@@ -375,13 +346,22 @@ def main():
         default='shopify_customers_import.csv',
         help='Path to save Shopify customers CSV'
     )
+    parser.add_argument(
+        '--no-progress',
+        action='store_true',
+        help='Disable progress bar'
+    )
 
     args = parser.parse_args()
 
     if not args.woo_file and not args.mailchimp_folder:
         parser.error("At least one of --woo-file or --mailchimp-folder is required")
 
-    tool = CustomerMigrationTool()
+    config = {
+        'show_progress': not args.no_progress,
+    }
+
+    tool = CustomerMigrationTool(config)
 
     try:
         tool.convert_customers(
@@ -390,8 +370,8 @@ def main():
             output_file=args.output
         )
     except Exception as e:
-        logging.error(f"Migration failed: {str(e)}")
-        raise
+        print(f"Migration failed: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

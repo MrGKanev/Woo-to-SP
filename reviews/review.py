@@ -3,193 +3,151 @@
 
 import pandas as pd
 from pathlib import Path
-from datetime import datetime
-import logging
-import re
-from typing import Dict, List, Optional, Tuple
-import json
+from typing import Dict, List, Optional, Tuple, Any
 import argparse
+import sys
 
-class ReviewMigrationTool:
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base.base_migration import BaseMigrationTool
+
+
+class ReviewMigrationTool(BaseMigrationTool):
     """Tool for migrating WooCommerce product reviews to Shopify."""
-    
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {}
-        self.setup_logging()
-        self.stats = {
-            'total_reviews': 0,
-            'successful': 0,
-            'failed': 0,
-            'warnings': 0
-        }
-        
-    def setup_logging(self):
-        """Configure logging system."""
-        log_dir = Path('logs')
-        log_dir.mkdir(exist_ok=True)
-        
-        log_file = log_dir / f'review_migration_{datetime.now():%Y%m%d_%H%M%S}.log'
-        
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
 
-    def validate_review(self, review: Dict) -> Tuple[bool, List[str]]:
+    TOOL_NAME = "review"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """Initialize review migration tool."""
+        super().__init__(config)
+        self.product_mapping: Dict[str, str] = {}
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration for review migration."""
+        config = super()._get_default_config()
+        config.update({
+            'validate_ratings': True,
+            'default_rating': 5,
+        })
+        return config
+
+    def _init_stats(self) -> Dict[str, Any]:
+        """Initialize statistics for review migration."""
+        stats = super()._init_stats()
+        stats.update({
+            'reviews_with_missing_product': 0,
+        })
+        return stats
+
+    def validate_item(self, review: Any) -> Tuple[bool, List[str]]:
         """
         Validate review data before conversion.
-        Returns tuple of (is_valid, list of errors).
+
+        Args:
+            review: Review data to validate
+
+        Returns:
+            Tuple of (is_valid, list of error messages)
         """
         errors = []
-        
+
         # Check required fields
         required_fields = ['comment_ID', 'comment_post_ID', 'comment_author', 'comment_content']
         for field in required_fields:
             if not review.get(field):
                 errors.append(f"Missing required field: {field}")
-        
-        # Validate rating if present
-        if 'rating' in review:
+
+        # Validate rating if present and validation enabled
+        if self.config.get('validate_ratings', True) and 'rating' in review:
             try:
                 rating = int(review['rating'])
                 if not 1 <= rating <= 5:
                     errors.append("Rating must be between 1 and 5")
             except (ValueError, TypeError):
                 errors.append("Invalid rating format")
-        
+
         return len(errors) == 0, errors
 
-    def clean_review_text(self, text: str) -> str:
-        """Clean and format review text."""
-        if not text:
-            return ""
-            
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
-        
-        # Remove multiple spaces
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Trim whitespace
-        text = text.strip()
-        
-        return text
+    def convert_item(self, review: Any) -> Optional[Dict[str, Any]]:
+        """
+        Convert a WooCommerce review to Shopify format.
 
-    def format_date(self, date_str: str) -> str:
-        """Format date to Shopify's expected format."""
+        Args:
+            review: Review data to convert
+
+        Returns:
+            Converted review data for Shopify
+        """
+        # Get product handle from mapping or create from ID
+        product_id = str(review['comment_post_ID'])
+        product_handle = self.product_mapping.get(
+            product_id,
+            self.create_handle(product_id)
+        )
+
+        if product_id not in self.product_mapping:
+            self.stats['reviews_with_missing_product'] += 1
+
+        # Get rating with fallback to default
         try:
-            # Handle different date formats
-            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y']:
-                try:
-                    dt = datetime.strptime(date_str, fmt)
-                    return dt.strftime('%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    continue
-            raise ValueError(f"Unrecognized date format: {date_str}")
-        except Exception as e:
-            self.logger.warning(f"Date formatting error: {str(e)}. Using current date.")
-            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            rating = int(review.get('rating', self.config['default_rating']))
+            rating = max(1, min(5, rating))  # Clamp to 1-5
+        except (ValueError, TypeError):
+            rating = self.config['default_rating']
 
-    def convert_reviews(self, input_file: str, output_file: str, product_mapping_file: Optional[str] = None):
+        # Convert to Shopify format
+        return {
+            'Product Handle': product_handle,
+            'Review Date': self.format_date(review.get('comment_date', '')),
+            'Reviewer Name': self.clean_text(review['comment_author']),
+            'Reviewer Email': self.clean_text(review.get('comment_author_email', '')),
+            'Review Title': self.clean_text(review.get('title', '')),
+            'Rating': rating,
+            'Review Text': self.clean_html(str(review['comment_content'])),
+            'Review Status': 'published' if str(review.get('comment_approved', '1')) == '1' else 'unpublished',
+            'Reviewer Location': self.clean_text(review.get('comment_author_location', '')),
+            'Verified Buyer': str(review.get('verified', '0')) == '1',
+        }
+
+    def load_mapping(self, mapping_df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Load product ID to handle mapping.
+
+        Args:
+            mapping_df: DataFrame with woo_id and shopify_handle columns
+
+        Returns:
+            Dictionary mapping WooCommerce IDs to Shopify handles
+        """
+        if 'woo_id' in mapping_df.columns and 'shopify_handle' in mapping_df.columns:
+            return dict(zip(
+                mapping_df['woo_id'].astype(str),
+                mapping_df['shopify_handle'].astype(str)
+            ))
+        return {}
+
+    def convert_reviews(
+        self,
+        input_file: str,
+        output_file: str,
+        product_mapping_file: Optional[str] = None
+    ) -> None:
         """
         Convert WooCommerce reviews to Shopify format.
-        
+
         Args:
             input_file: Path to WooCommerce reviews export CSV
             output_file: Path to save Shopify reviews CSV
-            product_mapping_file: Optional CSV file mapping WooCommerce product IDs to Shopify handles
+            product_mapping_file: Optional CSV mapping WooCommerce product IDs to Shopify handles
         """
-        try:
-            self.logger.info(f"Starting review migration from {input_file}")
-            
-            # Load product mapping if provided
-            product_mapping = {}
-            if product_mapping_file:
-                mapping_df = pd.read_csv(product_mapping_file)
-                product_mapping = dict(zip(mapping_df['woo_id'], mapping_df['shopify_handle']))
-            
-            # Read WooCommerce reviews
-            df = pd.read_csv(input_file)
-            self.stats['total_reviews'] = len(df)
-            
-            shopify_reviews = []
-            
-            for _, review in df.iterrows():
-                try:
-                    # Validate review data
-                    is_valid, errors = self.validate_review(review)
-                    if not is_valid:
-                        self.logger.warning(f"Invalid review {review.get('comment_ID')}: {', '.join(errors)}")
-                        self.stats['warnings'] += 1
-                        continue
-                    
-                    # Get product handle
-                    product_id = str(review['comment_post_ID'])
-                    product_handle = product_mapping.get(product_id, self.create_handle(str(product_id)))
-                    
-                    # Convert review to Shopify format
-                    shopify_review = {
-                        'Product Handle': product_handle,
-                        'Review Date': self.format_date(review['comment_date']),
-                        'Reviewer Name': review['comment_author'],
-                        'Reviewer Email': review.get('comment_author_email', ''),
-                        'Review Title': review.get('title', ''),
-                        'Rating': int(review.get('rating', 5)),
-                        'Review Text': self.clean_review_text(review['comment_content']),
-                        'Review Status': 'published' if review.get('comment_approved', '1') == '1' else 'unpublished',
-                        'Reviewer Location': review.get('comment_author_location', ''),
-                        'Verified Buyer': review.get('verified', '0') == '1',
-                    }
-                    
-                    shopify_reviews.append(shopify_review)
-                    self.stats['successful'] += 1
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing review {review.get('comment_ID')}: {str(e)}")
-                    self.stats['failed'] += 1
-            
-            # Save to CSV
-            output_df = pd.DataFrame(shopify_reviews)
-            output_df.to_csv(output_file, index=False)
-            
-            # Generate report
-            self.generate_report(output_file)
-            
-            self.logger.info(f"Review migration completed. See {output_file} for results.")
-            
-        except Exception as e:
-            self.logger.error(f"Migration failed: {str(e)}")
-            raise
+        # Load product mapping if provided
+        if product_mapping_file and Path(product_mapping_file).exists():
+            mapping_df = pd.read_csv(product_mapping_file)
+            self.product_mapping = self.load_mapping(mapping_df)
+            self.logger.info(f"Loaded {len(self.product_mapping)} product mappings")
 
-    def create_handle(self, text: str) -> str:
-        """Create URL-friendly handle."""
-        handle = text.lower()
-        handle = re.sub(r'[^a-z0-9]+', '-', handle)
-        return handle.strip('-')
+        # Use base class conversion
+        self.convert_data(input_file, output_file)
 
-    def generate_report(self, output_file: str) -> None:
-        """Generate migration report."""
-        report = {
-            'timestamp': datetime.now().isoformat(),
-            'input_file': self.config.get('input_file', 'N/A'),
-            'output_file': output_file,
-            'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_reviews'], 1) * 100):.2f}%"
-        }
-        
-        # Save report
-        report_file = Path('reports') / f'review_migration_report_{datetime.now():%Y%m%d_%H%M%S}.json'
-        report_file.parent.mkdir(exist_ok=True)
-        
-        with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2)
-        
-        self.logger.info(f"Migration report saved to {report_file}")
 
 def main():
     """CLI entry point for review migration."""
@@ -211,10 +169,19 @@ def main():
         default=None,
         help='Path to product mapping CSV (optional)'
     )
+    parser.add_argument(
+        '--no-progress',
+        action='store_true',
+        help='Disable progress bar'
+    )
 
     args = parser.parse_args()
 
-    tool = ReviewMigrationTool()
+    config = {
+        'show_progress': not args.no_progress,
+    }
+
+    tool = ReviewMigrationTool(config)
 
     try:
         tool.convert_reviews(
@@ -223,8 +190,8 @@ def main():
             product_mapping_file=args.product_mapping
         )
     except Exception as e:
-        logging.error(f"Migration failed: {str(e)}")
-        raise
+        print(f"Migration failed: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
