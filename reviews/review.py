@@ -1,11 +1,14 @@
-# woo_reviews_migration.py
+# reviews/review.py
+"""Review migration module for converting WooCommerce product reviews to Shopify format."""
+
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import json
+import argparse
 
 class ReviewMigrationTool:
     """Tool for migrating WooCommerce product reviews to Shopify."""
@@ -37,7 +40,7 @@ class ReviewMigrationTool:
         )
         self.logger = logging.getLogger(__name__)
 
-    def validate_review(self, review: Dict) -> tuple[bool, List[str]]:
+    def validate_review(self, review: Dict) -> Tuple[bool, List[str]]:
         """
         Validate review data before conversion.
         Returns tuple of (is_valid, list of errors).
@@ -176,7 +179,7 @@ class ReviewMigrationTool:
             'input_file': self.config.get('input_file', 'N/A'),
             'output_file': output_file,
             'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / self.stats['total_reviews'] * 100):.2f}%"
+            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_reviews'], 1) * 100):.2f}%"
         }
         
         # Save report
@@ -189,24 +192,40 @@ class ReviewMigrationTool:
         self.logger.info(f"Migration report saved to {report_file}")
 
 def main():
-    """Example usage of the ReviewMigrationTool."""
-    config = {
-        'input_file': 'woo_reviews_export.csv',
-        'output_file': 'shopify_reviews_import.csv',
-        'product_mapping_file': 'product_mapping.csv'  # Optional
-    }
-    
-    tool = ReviewMigrationTool(config)
-    
+    """CLI entry point for review migration."""
+    parser = argparse.ArgumentParser(
+        description='Migrate WooCommerce product reviews to Shopify format'
+    )
+    parser.add_argument(
+        '-i', '--input',
+        default='woo_reviews_export.csv',
+        help='Path to WooCommerce reviews export CSV'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        default='shopify_reviews_import.csv',
+        help='Path to save Shopify reviews CSV'
+    )
+    parser.add_argument(
+        '-m', '--product-mapping',
+        default=None,
+        help='Path to product mapping CSV (optional)'
+    )
+
+    args = parser.parse_args()
+
+    tool = ReviewMigrationTool()
+
     try:
         tool.convert_reviews(
-            input_file=config['input_file'],
-            output_file=config['output_file'],
-            product_mapping_file=config.get('product_mapping_file')
+            input_file=args.input,
+            output_file=args.output,
+            product_mapping_file=args.product_mapping
         )
     except Exception as e:
         logging.error(f"Migration failed: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()

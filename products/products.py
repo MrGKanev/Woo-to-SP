@@ -1,4 +1,6 @@
 # products/products.py
+"""Product migration module for converting WooCommerce products to Shopify format."""
+
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
@@ -9,6 +11,7 @@ import re
 from dataclasses import dataclass, asdict
 import csv
 from urllib.parse import urlparse
+import argparse
 
 @dataclass
 class ProductVariant:
@@ -242,7 +245,7 @@ class ProductMigrationTool:
             'input_file': self.config.get('input_file', 'N/A'),
             'output_file': output_file,
             'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / self.stats['total_products'] * 100):.2f}%",
+            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_products'], 1) * 100):.2f}%",
             'configuration': self.config
         }
         
@@ -256,26 +259,58 @@ class ProductMigrationTool:
         self.logger.info(f"Migration report saved to {report_file}")
 
 def main():
-    """Example usage of the ProductMigrationTool."""
+    """CLI entry point for product migration."""
+    parser = argparse.ArgumentParser(
+        description='Migrate WooCommerce products to Shopify format'
+    )
+    parser.add_argument(
+        '-i', '--input',
+        default='woo_products_export.csv',
+        help='Path to WooCommerce products export CSV'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        default='shopify_products_import.csv',
+        help='Path to save Shopify products CSV'
+    )
+    parser.add_argument(
+        '-m', '--image-mapping',
+        default=None,
+        help='Path to image mapping CSV (optional)'
+    )
+    parser.add_argument(
+        '--skip-drafts',
+        action='store_true',
+        help='Skip draft products'
+    )
+    parser.add_argument(
+        '--no-images',
+        action='store_true',
+        help='Disable image migration'
+    )
+
+    args = parser.parse_args()
+
     config = {
-        'image_migration': True,
+        'image_migration': not args.no_images,
         'inventory_tracking': True,
         'default_weight_unit': 'kg',
         'batch_size': 100,
-        'skip_drafts': False
+        'skip_drafts': args.skip_drafts
     }
-    
+
     tool = ProductMigrationTool(config)
-    
+
     try:
         tool.convert_products(
-            input_file="data/input/woo_products_export.csv",
-            output_file="data/output/shopify_products_import.csv",
-            image_mapping_file="data/input/image_mapping.csv"  # Optional
+            input_file=args.input,
+            output_file=args.output,
+            image_mapping_file=args.image_mapping
         )
     except Exception as e:
         logging.error(f"Migration failed: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()

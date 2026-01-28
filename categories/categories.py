@@ -1,4 +1,6 @@
-# categories/collections.py
+# categories/categories.py
+"""Categories/Collections migration module for converting WooCommerce categories to Shopify collections."""
+
 import pandas as pd
 import logging
 from pathlib import Path
@@ -8,6 +10,7 @@ import re
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 import hashlib
+import argparse
 
 class CollectionMigrationTool:
     """Tool for migrating WordPress/WooCommerce categories to Shopify collections."""
@@ -217,7 +220,7 @@ class CollectionMigrationTool:
             'input_file': self.config.get('input_file', 'N/A'),
             'output_file': output_file,
             'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / self.stats['total_collections'] * 100):.2f}%",
+            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_collections'], 1) * 100):.2f}%",
             'configuration': {
                 'use_smart_collections': self.config.get('use_smart_collections', True),
                 'image_mapping_used': bool(self.config.get('image_mapping_file'))
@@ -234,25 +237,50 @@ class CollectionMigrationTool:
         self.logger.info(f"Migration report saved to {report_file}")
 
 def main():
-    """Example usage of the CollectionMigrationTool."""
+    """CLI entry point for collection migration."""
+    parser = argparse.ArgumentParser(
+        description='Migrate WooCommerce categories to Shopify collections'
+    )
+    parser.add_argument(
+        '-i', '--input',
+        default='wp_categories_export.csv',
+        help='Path to WordPress categories export CSV'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        default='shopify_collections_import.csv',
+        help='Path to save Shopify collections CSV'
+    )
+    parser.add_argument(
+        '-m', '--image-mapping',
+        default=None,
+        help='Path to category images mapping CSV (optional)'
+    )
+    parser.add_argument(
+        '--manual-collections',
+        action='store_true',
+        help='Use manual collections instead of smart collections'
+    )
+
+    args = parser.parse_args()
+
     config = {
-        'input_file': 'data/input/wp_categories_export.csv',
-        'output_file': 'data/output/sp_collections_import.csv',
-        'image_mapping_file': 'data/input/category_images.csv',  # Optional
-        'use_smart_collections': True  # Use smart collections with rules
+        'use_smart_collections': not args.manual_collections,
+        'image_mapping_file': args.image_mapping
     }
-    
+
     tool = CollectionMigrationTool(config)
-    
+
     try:
         tool.convert_collections(
-            input_file=config['input_file'],
-            output_file=config['output_file'],
-            image_mapping_file=config.get('image_mapping_file')
+            input_file=args.input,
+            output_file=args.output,
+            image_mapping_file=args.image_mapping
         )
     except Exception as e:
         logging.error(f"Migration failed: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()

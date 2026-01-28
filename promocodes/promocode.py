@@ -1,11 +1,14 @@
-# promocode/promocode.py
+# promocodes/promocode.py
+"""Discount codes migration module for converting WooCommerce coupons to Shopify discount codes."""
+
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import logging
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
+import argparse
 
 class DiscountMigrationTool:
     """Tool for migrating WordPress/WooCommerce coupons to Shopify discount codes."""
@@ -55,7 +58,7 @@ class DiscountMigrationTool:
             
         return code
 
-    def convert_amount_type(self, woo_type: str, amount: float) -> tuple[str, float]:
+    def convert_amount_type(self, woo_type: str, amount: float) -> Tuple[str, float]:
         """Convert WooCommerce discount type to Shopify format."""
         if woo_type == 'percent':
             return 'percentage', amount
@@ -198,7 +201,7 @@ class DiscountMigrationTool:
             'input_file': self.config.get('input_file', 'N/A'),
             'output_file': output_file,
             'statistics': self.stats,
-            'success_rate': f"{(self.stats['successful'] / self.stats['total_coupons'] * 100):.2f}%",
+            'success_rate': f"{(self.stats['successful'] / max(self.stats['total_coupons'], 1) * 100):.2f}%",
             'configuration': self.config
         }
         
@@ -212,24 +215,52 @@ class DiscountMigrationTool:
         self.logger.info(f"Migration report saved to {report_file}")
 
 def main():
-    """Example usage of the DiscountMigrationTool."""
+    """CLI entry point for discount code migration."""
+    parser = argparse.ArgumentParser(
+        description='Migrate WooCommerce coupons to Shopify discount codes'
+    )
+    parser.add_argument(
+        '-i', '--input',
+        default='wp_coupons_export.csv',
+        help='Path to WooCommerce coupons export CSV'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        default='shopify_discounts_import.csv',
+        help='Path to save Shopify discount codes CSV'
+    )
+    parser.add_argument(
+        '-m', '--product-mapping',
+        default=None,
+        help='Path to product mapping CSV (optional)'
+    )
+    parser.add_argument(
+        '--min-amount',
+        type=float,
+        default=0,
+        help='Default minimum purchase amount'
+    )
+
+    args = parser.parse_args()
+
     config = {
-        'default_minimum_amount': 0,
+        'default_minimum_amount': args.min_amount,
         'default_usage_limit': None,
         'batch_size': 500
     }
-    
+
     tool = DiscountMigrationTool(config)
-    
+
     try:
         tool.convert_discounts(
-            input_file="data/input/wp_coupons_export.csv",
-            output_file="data/output/sp_discounts_import.csv",
-            product_mapping_file="data/input/product_mapping.csv"  # Optional
+            input_file=args.input,
+            output_file=args.output,
+            product_mapping_file=args.product_mapping
         )
     except Exception as e:
         logging.error(f"Migration failed: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()
