@@ -1,108 +1,139 @@
-# WooCommerce to Shopify (Woo-to-SP) Migration Tools
+# Woo-to-SP: WooCommerce to Shopify Migration Toolkit
 
-A comprehensive Python toolkit for migrating WooCommerce and MailChimp data to Shopify, including products, customers, orders, categories/collections, reviews, and discount codes.
+A Python toolkit for migrating WooCommerce and MailChimp data to Shopify CSV format. Supports products, customers, orders, categories/collections, reviews, and discount codes.
 
-## 🌟 Features
+## Features
 
-### Products Migration
+- **Products** - Complete product data, variants, images, inventory, SEO
+- **Customers** - WooCommerce customers + MailChimp subscriber import with deduplication
+- **Orders** - Full order history with line items, meta fields, tax and shipping
+- **Collections** - Category hierarchy, smart/manual collections, collection rules
+- **Reviews** - Ratings, verified buyer status, product mapping
+- **Discount Codes** - Coupon conversion with usage limits, product restrictions, date ranges
 
-- Complete product data migration
-- Advanced variant support
-- Image handling and CDN mapping
-- SEO data preservation
+## Prerequisites
 
-### Customers Migration
+- Python 3.9+
+- WooCommerce/WordPress CSV exports
+- MailChimp exports (optional, for subscriber migration)
 
-- WooCommerce customers conversion
-- MailChimp subscribers integration
-- Address formatting
-- Marketing preferences
-
-### Orders Migration
-
-- Full order history transfer
-- Custom meta field mapping
-- Line item preservation
-- Tax and shipping details
-
-### Collections Migration
-
-- Category hierarchy preservation
-- Smart collection rules
-- SEO data migration
-- Image handling
-
-### Reviews Migration
-
-- Rating preservation
-- Verified buyer status
-- Review metadata
-- Customer information
-
-### Discount Codes Migration
-
-- Coupon code conversion
-- Usage limits
-- Product restrictions
-- Date range preservation
-
-## 📋 Prerequisites
-
-- Python 3.8+
-- Required packages (install via `pip install -r requirements.txt`)
-- WooCommerce/WordPress exports
-- MailChimp exports (if migrating subscribers)
-
-## 🚀 Quick Start
-
-1. Clone the repository:
+## Installation
 
 ```bash
-git clone <repository-url>
-cd woo-to-sp-migration
+git clone https://github.com/MrGKanev/Woo-to-SP.git
+cd Woo-to-SP
+pip install -e .
 ```
 
-2. Install dependencies:
+For development:
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
-3. Choose your migration tool:
+## Usage
+
+All commands follow the same pattern:
 
 ```bash
-cd [products|customers|orders|collections|reviews|discounts]
-python main.py
+woo-to-sp <command> -i <input.csv> -o <output.csv> [options]
 ```
 
-## 📁 Project Structure
+### Products
 
-```
-woo-to-sp/
-├── requirements.txt
-├── LICENSE
-├── README.md
-├── products/
-│   ├── README.md
-│   └── main.py
-├── customers/
-│   ├── README.md
-│   └── main.py
-├── orders/
-│   ├── README.md
-│   └── main.py
-├── collections/
-│   ├── README.md
-│   └── main.py
-├── reviews/
-│   ├── README.md
-│   └── main.py
-└── discounts/
-    ├── README.md
-    └── main.py
+```bash
+woo-to-sp products -i woo_products.csv -o shopify_products.csv
+woo-to-sp products -i woo_products.csv -o shopify_products.csv --skip-drafts --no-images
+woo-to-sp products -i woo_products.csv -o shopify_products.csv -m image_mapping.csv
 ```
 
-## 📥 Required Export Files
+### Customers
+
+```bash
+woo-to-sp customers -w woo_customers.csv -o shopify_customers.csv
+woo-to-sp customers -w woo_customers.csv -m mailchimp_export.zip -o shopify_customers.csv
+```
+
+### Orders
+
+```bash
+woo-to-sp orders -i woo_orders.csv -o shopify_orders.csv
+woo-to-sp orders -i woo_orders.csv -o shopify_orders.csv -m meta_mapping.csv
+```
+
+### Collections
+
+```bash
+woo-to-sp collections -i woo_categories.csv -o shopify_collections.csv
+woo-to-sp collections -i woo_categories.csv -o shopify_collections.csv --manual-collections
+```
+
+### Reviews
+
+```bash
+woo-to-sp reviews -i woo_reviews.csv -o shopify_reviews.csv
+woo-to-sp reviews -i woo_reviews.csv -o shopify_reviews.csv -m product_mapping.csv
+```
+
+### Discounts
+
+```bash
+woo-to-sp discounts -i woo_coupons.csv -o shopify_discounts.csv
+woo-to-sp discounts -i woo_coupons.csv -o shopify_discounts.csv --min-amount 25
+```
+
+### Global Options
+
+| Option | Description |
+|--------|-------------|
+| `--verbose` / `-v` | Enable verbose logging output |
+| `--dry-run` | Validate and transform without writing output files |
+| `--help` | Show help for any command |
+
+You can also run via module:
+
+```bash
+python -m woo_to_sp products -i input.csv -o output.csv
+```
+
+## Project Structure
+
+```
+Woo-to-SP/
+├── src/woo_to_sp/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── cli.py              # Typer CLI with Rich output
+│   ├── config.py            # Pydantic configuration models
+│   ├── utils.py             # Standalone utility functions
+│   ├── base/
+│   │   └── base_migration.py  # Abstract base class
+│   ├── products/
+│   │   └── products.py
+│   ├── customers/
+│   │   └── customers.py
+│   ├── orders/
+│   │   └── orders.py
+│   ├── categories/
+│   │   └── categories.py
+│   ├── reviews/
+│   │   └── review.py
+│   └── promocodes/
+│       └── promocode.py
+├── tests/
+│   ├── conftest.py
+│   ├── test_base.py
+│   ├── test_products.py
+│   ├── test_customers.py
+│   ├── test_orders.py
+│   ├── test_collections.py
+│   ├── test_reviews.py
+│   ├── test_discounts.py
+│   └── test_cli.py
+└── pyproject.toml
+```
+
+## Required Export Files
 
 ### From WooCommerce
 
@@ -115,56 +146,35 @@ woo-to-sp/
 
 ### From MailChimp (Optional)
 
-- Audience export (CSV)
+- Audience export (CSV or ZIP)
 - Merge fields export
 - Segments export
 
-## 🎯 Migration Process
+## Reporting
 
-1. Export data from WooCommerce/MailChimp
-2. Configure mapping files if needed
-3. Run appropriate migration tool
-4. Review generated reports
-5. Import data into Shopify
-
-## 📊 Reporting
-
-Each tool generates detailed reports including:
+Each migration generates a JSON report in the `reports/` directory with:
 
 - Success/failure statistics
-- Warning messages
-- Processing timestamps
-- Configuration details
+- Error details for failed rows
+- Processing duration
+- Configuration used
 
-## ⚠️ Common Issues
+## Development
 
-1. **Export Format Issues**
-   - Ensure exports are in correct CSV format
-   - Verify required columns are present
+```bash
+# Run tests
+pytest
 
-2. **Character Encoding**
-   - Use UTF-8 encoding for all files
-   - Check for special character handling
+# Run tests with coverage
+pytest --cov=woo_to_sp
 
-3. **Memory Usage**
-   - Process large datasets in batches
-   - Monitor system resources
+# Format code
+black src/ tests/
 
-## 🤝 Contributing
+# Lint
+ruff check src/ tests/
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
-4. Follow coding standards
+## License
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🆘 Support
-
-If you encounter issues:
-
-1. Check tool-specific README
-2. Review generated logs
-3. Open an issue in the repository
+MIT License - see the LICENSE file for details.
